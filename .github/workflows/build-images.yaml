@@ -2,20 +2,65 @@ name: Build and publish PostHog custom images
 
 on:
   workflow_dispatch:
-  schedule:
-    # Weekly rebuild to get latest PostHog updates
-    - cron: '0 0 * * 0'
 
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/hexatare/posthog-railway-template
+  POSTHOG_APP_TAG: 9373a2b55081d3e711ad58bca060a6a9ab5d41a5
 
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       packages: write
+
+    strategy:
+      matrix:
+        include:
+          - image: capture
+            dockerfile: ./capture.Dockerfile
+          - image: clickhouse
+            dockerfile: ./clickhouse.Dockerfile
+          - image: cyclotron-janitor
+            dockerfile: ./cyclotron-janitor.Dockerfile
+          - image: cymbal
+            dockerfile: ./cymbal.Dockerfile
+          - image: db
+            dockerfile: ./db.Dockerfile
+          - image: feature-flags
+            dockerfile: ./feature-flags.Dockerfile
+          - image: kafka-init
+            dockerfile: ./kafka-init.Dockerfile
+          - image: kafka
+            dockerfile: ./kafka.Dockerfile
+          - image: livestream
+            dockerfile: ./livestream.Dockerfile
+          - image: objectstorage
+            dockerfile: ./objectstorage.Dockerfile
+          - image: plugins
+            dockerfile: ./plugins.Dockerfile
+          - image: property-defs-rs
+            dockerfile: ./property-defs-rs.Dockerfile
+          - image: proxy
+            dockerfile: ./proxy.Dockerfile
+          - image: redis7
+            dockerfile: ./redis7.Dockerfile
+          - image: replay-capture
+            dockerfile: ./replay-capture.Dockerfile
+          - image: seaweedfs
+            dockerfile: ./seaweedfs.Dockerfile
+          - image: temporal-django-worker
+            dockerfile: ./temporal-django-worker.Dockerfile
+          - image: temporal
+            dockerfile: ./temporal.Dockerfile
+          - image: web
+            dockerfile: ./web.Dockerfile
+          - image: worker
+            dockerfile: ./worker.Dockerfile
+          - image: zookeeper
+            dockerfile: ./zookeeper.Dockerfile
 
     steps:
       - name: Checkout repository
@@ -23,40 +68,45 @@ jobs:
 
       - name: Clone PostHog repository
         run: |
-          git clone --depth 1 https://github.com/PostHog/posthog.git ./posthog
+          git clone --filter=blob:none https://github.com/PostHog/posthog.git ./posthog
+
+      - name: Checkout to POSTHOG_APP_TAG
+        working-directory: ./posthog
+        run: |
+          git checkout ${{ env.POSTHOG_APP_TAG }}
 
       - name: Download GeoIP database
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl ca-certificates brotli
-
-          mkdir -p ./share
+          apt-get update &&
+          apt-get install -y --no-install-recommends curl ca-certificates brotli &&
+          mkdir -p ./share &&
           if [ ! -f ./share/GeoLite2-City.mmdb ]; then
-            curl -L 'https://mmdbcdn.posthog.net/' --http1.1 | brotli --decompress --output=./share/GeoLite2-City.mmdb
-            echo '{"date": "'$(date +%Y-%m-%d)'"}' > ./share/GeoLite2-City.json
-            chmod 644 ./share/GeoLite2-City.mmdb
-            chmod 644 ./share/GeoLite2-City.json
+              curl -L 'https://mmdbcdn.posthog.net/' --http1.1 | brotli --decompress --output=./share/GeoLite2-City.mmdb &&
+              echo '{\"date\": \"'"$(date +%Y-%m-%d)"'\"}' > ./share/GeoLite2-City.json;
+              chmod 644 ./share/GeoLite2-City.mmdb &&
+              chmod 644 ./share/GeoLite2-City.json
           fi
 
-      - name: Create compose scripts
+      - name: Write entrypoint
         run: |
-          # Matches deploy-hobby script exactly
           rm -rf compose
           mkdir -p compose
-
-          cat > compose/start << 'EOF'
+          cat > compose/start <<EOF
           #!/bin/bash
           ./compose/wait
           ./bin/migrate
           ./bin/docker-server
           EOF
+          chmod +x compose/start
 
-          cat > compose/temporal-django-worker << 'EOF'
+          cat > compose/temporal-django-worker <<EOF
           #!/bin/bash
           ./bin/temporal-django-worker
           EOF
+          chmod +x compose/temporal-django-worker
 
-          cat > compose/wait << 'EOF'
+          # write wait script
+          cat > compose/wait <<EOF
           #!/usr/bin/env python3
 
           import socket
@@ -77,9 +127,6 @@ jobs:
 
           loop()
           EOF
-
-          chmod +x compose/start
-          chmod +x compose/temporal-django-worker
           chmod +x compose/wait
 
       - name: Log in to GitHub Container Registry
@@ -92,72 +139,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push ClickHouse
+      - name: Build and push ${{ matrix.image }}
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./ClickHouse.Dockerfile
+          file: ${{ matrix.dockerfile }}
+          tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
           push: true
-          tags: ${{ env.IMAGE_PREFIX }}/clickhouse:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push Web
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Web.Dockerfile
-          push: true
-          tags: ${{ env.IMAGE_PREFIX }}/web:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push Temporal
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Temporal.Dockerfile
-          push: true
-          tags: ${{ env.IMAGE_PREFIX }}/temporal:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push TemporalDjangoWorker
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./TemporalDjangoWorker.Dockerfile
-          push: true
-          tags: ${{ env.IMAGE_PREFIX }}/temporal-django-worker:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push FeatureFlags
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./FeatureFlags.Dockerfile
-          push: true
-          tags: ${{ env.IMAGE_PREFIX }}/feature-flags:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push Livestream
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Livestream.Dockerfile
-          push: true
-          tags: ${{ env.IMAGE_PREFIX }}/livestream:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push Cymbal
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Cymbal.Dockerfile
-          push: true
-          tags: ${{ env.IMAGE_PREFIX }}/cymbal:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
