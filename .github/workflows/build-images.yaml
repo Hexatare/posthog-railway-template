@@ -15,6 +15,9 @@ jobs:
             - name: Checkout repository
               uses: actions/checkout@v4
 
+            - name: Set lowercase repository name
+              run: echo "REPOSITORY_LOWERCASE=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
             - name: Clone PostHog repository
               run: |
                   git clone --depth 1 https://github.com/PostHog/posthog.git ./posthog
@@ -84,7 +87,7 @@ jobs:
               with:
                   context: .
                   file: ./ClickHouse.Dockerfile
-                  tags: ghcr.io/${{ github.repository }}/clickhouse:latest
+                  tags: ghcr.io/${{ env.REPOSITORY_LOWERCASE }}/clickhouse:latest
                   push: true
 
             - name: Build and push Web image
@@ -92,7 +95,7 @@ jobs:
               with:
                   context: .
                   file: ./Web.Dockerfile
-                  tags: ghcr.io/${{ github.repository }}/web:latest
+                  tags: ghcr.io/${{ env.REPOSITORY_LOWERCASE }}/web:latest
                   push: true
 
             - name: Build and push FeatureFlags image
@@ -100,7 +103,7 @@ jobs:
               with:
                   context: .
                   file: ./FeatureFlags.Dockerfile
-                  tags: ghcr.io/${{ github.repository }}/feature-flags:latest
+                  tags: ghcr.io/${{ env.REPOSITORY_LOWERCASE }}/feature-flags:latest
                   push: true
 
             - name: Build and push Temporal image
@@ -108,7 +111,7 @@ jobs:
               with:
                   context: .
                   file: ./Temporal.Dockerfile
-                  tags: ghcr.io/${{ github.repository }}/temporal:latest
+                  tags: ghcr.io/${{ env.REPOSITORY_LOWERCASE }}/temporal:latest
                   push: true
 
             - name: Build and push Temporal Django Worker image
@@ -116,5 +119,5 @@ jobs:
               with:
                   context: .
                   file: ./TemporalDjangoWorker.Dockerfile
-                  tags: ghcr.io/${{ github.repository }}/temporal-django-worker:latest
+                  tags: ghcr.io/${{ env.REPOSITORY_LOWERCASE }}/temporal-django-worker:latest
                   push: true
