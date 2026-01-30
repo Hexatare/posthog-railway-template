@@ -142,6 +142,8 @@ jobs:
       - name: Build and push ${{ matrix.image }}
         uses: docker/build-push-action@v6
         with:
+          build-args: |
+            POSTHOG_APP_TAG=${{ env.POSTHOG_APP_TAG }}
           context: .
           file: ${{ matrix.dockerfile }}
           tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
