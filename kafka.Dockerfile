@@ -1,6 +1,6 @@
 FROM docker.redpanda.com/redpandadata/redpanda:v25.1.9
 
-ENTRYPOINT [ \
+CMD [ \
     "redpanda", \
     "start", \
     "--kafka-addr", "internal://0.0.0.0:9092,external://0.0.0.0:19092", \
