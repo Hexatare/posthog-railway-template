@@ -1,4 +1,4 @@
-FROM clickhouse/clickhouse-server:25.6.9.98
+FROM clickhouse/clickhouse-server:25.8.12.129
 
 COPY ./posthog/posthog/idl /idl
 COPY ./posthog/docker/clickhouse/docker-entrypoint-initdb.d /docker-entrypoint-initdb.d

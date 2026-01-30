@@ -1,123 +1,163 @@
-name: Build and publish all custom images
+name: Build and publish PostHog custom images
 
 on:
-    workflow_dispatch:
+  workflow_dispatch:
+  schedule:
+    # Weekly rebuild to get latest PostHog updates
+    - cron: '0 0 * * 0'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/hexatare/posthog-railway-template
 
 jobs:
-    build-and-publish:
-        runs-on: ubuntu-latest
-        permissions:
-            contents: write
-            packages: write
-            id-token: write
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
-        steps:
-            - name: Checkout repository
-              uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-            - name: Set lowercase repository name
-              run: echo "REPOSITORY_LOWERCASE=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+      - name: Clone PostHog repository
+        run: |
+          git clone --depth 1 https://github.com/PostHog/posthog.git ./posthog
 
-            - name: Clone PostHog repository
-              run: |
-                  git clone --depth 1 https://github.com/PostHog/posthog.git ./posthog
+      - name: Download GeoIP database
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl ca-certificates brotli
 
-            - name: Download GeoIP database
-              run: |
-                  sudo apt-get update
-                  sudo apt-get install -y curl ca-certificates brotli
+          mkdir -p ./share
+          if [ ! -f ./share/GeoLite2-City.mmdb ]; then
+            curl -L 'https://mmdbcdn.posthog.net/' --http1.1 | brotli --decompress --output=./share/GeoLite2-City.mmdb
+            echo '{"date": "'$(date +%Y-%m-%d)'"}' > ./share/GeoLite2-City.json
+            chmod 644 ./share/GeoLite2-City.mmdb
+            chmod 644 ./share/GeoLite2-City.json
+          fi
 
-                  mkdir -p ./share
+      - name: Create compose scripts
+        run: |
+          # Matches deploy-hobby script exactly
+          rm -rf compose
+          mkdir -p compose
 
-                  if [ ! -f ./share/GeoLite2-City.mmdb ]; then
-                    curl -L 'https://mmdbcdn.posthog.net/' --http1.1 | brotli --decompress --output=./share/GeoLite2-City.mmdb
-                    echo "{\"date\": \"$(date +%Y-%m-%d)\"}" > ./share/GeoLite2-City.json
-                    chmod 644 ./share/GeoLite2-City.mmdb
-                    chmod 644 ./share/GeoLite2-City.json
-                  fi
+          cat > compose/start << 'EOF'
+          #!/bin/bash
+          ./compose/wait
+          ./bin/migrate
+          ./bin/docker-server
+          EOF
 
-            - name: Create scripts in /compose dir
-              run: |
-                  mkdir -p compose
+          cat > compose/temporal-django-worker << 'EOF'
+          #!/bin/bash
+          ./bin/temporal-django-worker
+          EOF
 
-                  cat > compose/start <<EOF
-                  #!/bin/bash
-                  ./compose/wait
-                  ./bin/migrate
-                  ./bin/docker-server
-                  EOF
+          cat > compose/wait << 'EOF'
+          #!/usr/bin/env python3
 
-                  cat > compose/temporal-django-worker <<EOF
-                  #!/bin/bash
-                  ./bin/temporal-django-worker
-                  EOF
+          import socket
+          import time
 
-                  cat > compose/wait <<EOF
-                  #!/usr/bin/env python3
-                  import socket
-                  import time
-                  def loop():
-                      print("Waiting for ClickHouse and Postgres to be ready")
-                      try:
-                          with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                              s.connect(('clickhouse', 9000))
-                          print("Clickhouse is ready")
-                          with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                              s.connect(('db', 5432))
-                          print("Postgres is ready")
-                      except ConnectionRefusedError as e:
-                          time.sleep(5)
-                          loop()
+          def loop():
+              print("Waiting for ClickHouse and Postgres to be ready")
+              try:
+                  with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                      s.connect(('clickhouse', 9000))
+                  print("Clickhouse is ready")
+                  with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                      s.connect(('db', 5432))
+                  print("Postgres is ready")
+              except ConnectionRefusedError as e:
+                  time.sleep(5)
                   loop()
-                  EOF
 
-                  chmod +x compose/start
-                  chmod +x compose/temporal-django-worker
-                  chmod +x compose/wait
+          loop()
+          EOF
 
-            - name: Log in to GitHub Container Registry
-              uses: docker/login-action@v3
-              with:
-                  registry: ghcr.io
-                  username: ${{ github.actor }}
-                  password: ${{ secrets.GITHUB_TOKEN }}
+          chmod +x compose/start
+          chmod +x compose/temporal-django-worker
+          chmod +x compose/wait
 
-            - name: Build and push ClickHouse image
-              uses: docker/build-push-action@v6
-              with:
-                  context: .
-                  file: ./ClickHouse.Dockerfile
-                  tags: ghcr.io/${{ env.REPOSITORY_LOWERCASE }}/clickhouse:latest
-                  push: true
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Build and push Web image
-              uses: docker/build-push-action@v6
-              with:
-                  context: .
-                  file: ./Web.Dockerfile
-                  tags: ghcr.io/${{ env.REPOSITORY_LOWERCASE }}/web:latest
-                  push: true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-            - name: Build and push FeatureFlags image
-              uses: docker/build-push-action@v6
-              with:
-                  context: .
-                  file: ./FeatureFlags.Dockerfile
-                  tags: ghcr.io/${{ env.REPOSITORY_LOWERCASE }}/feature-flags:latest
-                  push: true
+      - name: Build and push ClickHouse
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./ClickHouse.Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_PREFIX }}/clickhouse:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-            - name: Build and push Temporal image
-              uses: docker/build-push-action@v6
-              with:
-                  context: .
-                  file: ./Temporal.Dockerfile
-                  tags: ghcr.io/${{ env.REPOSITORY_LOWERCASE }}/temporal:latest
-                  push: true
+      - name: Build and push Web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Web.Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_PREFIX }}/web:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-            - name: Build and push Temporal Django Worker image
-              uses: docker/build-push-action@v6
-              with:
-                  context: .
-                  file: ./TemporalDjangoWorker.Dockerfile
-                  tags: ghcr.io/${{ env.REPOSITORY_LOWERCASE }}/temporal-django-worker:latest
-                  push: true
+      - name: Build and push Temporal
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Temporal.Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_PREFIX }}/temporal:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push TemporalDjangoWorker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./TemporalDjangoWorker.Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_PREFIX }}/temporal-django-worker:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push FeatureFlags
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./FeatureFlags.Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_PREFIX }}/feature-flags:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Livestream
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Livestream.Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_PREFIX }}/livestream:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Cymbal
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Cymbal.Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_PREFIX }}/cymbal:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
