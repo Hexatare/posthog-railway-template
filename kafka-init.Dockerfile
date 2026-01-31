@@ -5,29 +5,29 @@ COPY --chmod=755 <<EOF /entrypoint.sh
 set -e
 set -x
 
-KAFKA_BROKERS=\${KAFKA_BROKERS:-kafka:9092}
+KAFKA_HOSTS=\${KAFKA_HOSTS:-kafka:9092}
 
-echo "Waiting for Kafka broker to accept connections at \$KAFKA_BROKERS..."
+echo "Waiting for Kafka broker to accept connections at \$KAFKA_HOSTS..."
 TIMEOUT=60
 ELAPSED=0
-until rpk topic list --brokers "\$KAFKA_BROKERS" 2>/dev/null; do
+until rpk topic list --brokers "\$KAFKA_HOSTS" 2>/dev/null; do
   echo "Kafka broker not ready yet (elapsed: \${ELAPSED}s)..."
   sleep 2
   ELAPSED=\$((ELAPSED + 2))
   if [ \$ELAPSED -ge \$TIMEOUT ]; then
     echo "Timeout waiting for Kafka broker after \${TIMEOUT}s"
     echo "Final attempt to list topics:"
-    rpk topic list --brokers "\$KAFKA_BROKERS" || true
+    rpk topic list --brokers "\$KAFKA_HOSTS" || true
     exit 1
   fi
 done
 
 echo "Kafka broker is accepting requests, creating topics..."
 for topic in exceptions_ingestion clickhouse_events_json; do
-  if rpk topic create "\$topic" --brokers "\$KAFKA_BROKERS" -p 1 -r 1 2>&1; then
+  if rpk topic create "\$topic" --brokers "\$KAFKA_HOSTS" -p 1 -r 1 2>&1; then
     echo "Topic \$topic created successfully"
   else
-    if rpk topic list --brokers "\$KAFKA_BROKERS" | grep -q "\$topic"; then
+    if rpk topic list --brokers "\$KAFKA_HOSTS" | grep -q "\$topic"; then
       echo "Topic \$topic already exists, continuing"
     else
       echo "Failed to create topic \$topic"
@@ -37,7 +37,7 @@ for topic in exceptions_ingestion clickhouse_events_json; do
 done
 
 echo "Final topic list:"
-rpk topic list --brokers "\$KAFKA_BROKERS"
+rpk topic list --brokers "\$KAFKA_HOSTS"
 echo "Topics ready"
 EOF
 
