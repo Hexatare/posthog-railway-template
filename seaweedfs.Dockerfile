@@ -1,6 +1,6 @@
 FROM chrislusf/seaweedfs:4.03
 
-COPY <<EOF /entrypoint.sh
+COPY --chmod=755 <<EOF /entrypoint.sh
 #!/bin/sh
 set -e
 
@@ -23,8 +23,6 @@ done
 echo "SeaweedFS ready with posthog bucket"
 wait \$WEED_PID
 EOF
-
-RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["server", "-s3", "-s3.port=8333", "-dir=/data"]
