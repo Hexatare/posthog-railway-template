@@ -1,150 +1,62 @@
-name: Build and publish PostHog custom images
-
-on:
-  workflow_dispatch:
-
+name: Build isolated PostHog validation images
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  packages: write
 env:
-  REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/hexatare/posthog-railway-template
-  POSTHOG_APP_TAG: 9373a2b55081d3e711ad58bca060a6a9ab5d41a5
-
+  VALIDATION_TAG: validation-20261013-1
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      packages: write
-
+    timeout-minutes: 45
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          - image: capture
-            dockerfile: ./capture.Dockerfile
-          - image: clickhouse
-            dockerfile: ./clickhouse.Dockerfile
-          - image: cyclotron-janitor
-            dockerfile: ./cyclotron-janitor.Dockerfile
-          - image: cymbal
-            dockerfile: ./cymbal.Dockerfile
-          - image: db
-            dockerfile: ./db.Dockerfile
-          - image: feature-flags
-            dockerfile: ./feature-flags.Dockerfile
-          - image: kafka-init
-            dockerfile: ./kafka-init.Dockerfile
-          - image: kafka
-            dockerfile: ./kafka.Dockerfile
-          - image: livestream
-            dockerfile: ./livestream.Dockerfile
-          - image: objectstorage
-            dockerfile: ./objectstorage.Dockerfile
-          - image: plugins
-            dockerfile: ./plugins.Dockerfile
-          - image: property-defs-rs
-            dockerfile: ./property-defs-rs.Dockerfile
-          - image: proxy
-            dockerfile: ./proxy.Dockerfile
-          - image: redis7
-            dockerfile: ./redis7.Dockerfile
-          - image: replay-capture
-            dockerfile: ./replay-capture.Dockerfile
-          - image: seaweedfs
-            dockerfile: ./seaweedfs.Dockerfile
-          - image: temporal-django-worker
-            dockerfile: ./temporal-django-worker.Dockerfile
-          - image: temporal
-            dockerfile: ./temporal.Dockerfile
-          - image: web
-            dockerfile: ./web.Dockerfile
-          - image: worker
-            dockerfile: ./worker.Dockerfile
-          - image: zookeeper
-            dockerfile: ./zookeeper.Dockerfile
-
+        image:
+        - app
+        - node
+        - clickhouse
+        - storage
+        - kafka-init
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Free build disk space
+      run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+    - name: Read immutable upstream configuration
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      with:
+        repository: PostHog/posthog
+        ref: 588de869d4989164b913b1b5b64bd82835b688de
+        path: posthog
+        sparse-checkout: 'docker/clickhouse
 
-      - name: Clone PostHog repository
-        run: |
-          git clone --filter=blob:none https://github.com/PostHog/posthog.git ./posthog
+          docker/kafka
 
-      - name: Checkout to POSTHOG_APP_TAG
-        working-directory: ./posthog
-        run: |
-          git checkout ${{ env.POSTHOG_APP_TAG }}
+          posthog/idl
 
-      - name: Download GeoIP database
-        run: |
-          sudo apt-get update &&
-          sudo apt-get install -y --no-install-recommends curl ca-certificates brotli &&
-          mkdir -p ./share &&
-          if [ ! -f ./share/GeoLite2-City.mmdb ]; then
-              curl -L 'https://mmdbcdn.posthog.net/' --http1.1 | brotli --decompress --output=./share/GeoLite2-City.mmdb &&
-              echo '{\"date\": \"'"$(date +%Y-%m-%d)"'\"}' > ./share/GeoLite2-City.json;
-              chmod 644 ./share/GeoLite2-City.mmdb &&
-              chmod 644 ./share/GeoLite2-City.json
-          fi
+          posthog/user_scripts'
+        persist-credentials: false
+    - name: Prepare minimal wrappers
+      run: "python3 - <<'PY'\nimport base64, json, zlib\nfrom pathlib import Path\nfiles = json.loads(zlib.decompress(base64.b64decode(\"\
+        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\"\
+        )))\nfor name, content in files.items():\n    path = Path(name)\n    path.parent.mkdir(parents=True, exist_ok=True)\n\
+        \    path.write_text(content)\nPY"
+    - name: Log in to GHCR
+      uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Set up Buildx
+      uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
+    - name: Build and publish immutable validation tag
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: wrappers/${{ matrix.image }}.Dockerfile
+        platforms: linux/amd64
+        push: true
+        tags: ghcr.io/hexatare/posthog-railway-template/${{ matrix.image }}:${{ env.VALIDATION_TAG }}
+        labels: 'org.opencontainers.image.source=https://github.com/Hexatare/posthog-railway-template
 
-      - name: Write entrypoint
-        run: |
-          rm -rf compose
-          mkdir -p compose
-          cat > compose/start <<EOF
-          #!/bin/bash
-          ./compose/wait
-          ./bin/migrate
-          ./bin/docker-server
-          EOF
-          chmod +x compose/start
-
-          cat > compose/temporal-django-worker <<EOF
-          #!/bin/bash
-          ./bin/temporal-django-worker
-          EOF
-          chmod +x compose/temporal-django-worker
-
-          # write wait script
-          cat > compose/wait <<EOF
-          #!/usr/bin/env python3
-
-          import socket
-          import time
-
-          def loop():
-              print("Waiting for ClickHouse and Postgres to be ready")
-              try:
-                  with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                      s.connect(('clickhouse', 9000))
-                  print("Clickhouse is ready")
-                  with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                      s.connect(('db', 5432))
-                  print("Postgres is ready")
-              except ConnectionRefusedError as e:
-                  time.sleep(5)
-                  loop()
-
-          loop()
-          EOF
-          chmod +x compose/wait
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push ${{ matrix.image }}
-        uses: docker/build-push-action@v6
-        with:
-          build-args: |
-            POSTHOG_APP_TAG=${{ env.POSTHOG_APP_TAG }}
-          context: .
-          file: ${{ matrix.dockerfile }}
-          tags: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:latest
-          push: true
+          org.opencontainers.image.revision=588de869d4989164b913b1b5b64bd82835b688de'
